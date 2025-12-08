@@ -12,7 +12,24 @@ multiverse:
       ansible_host: 192.168.194.174
       ansible_user: planeswalker
       ansible_ssh_private_key_file: ~/.ssh/homelab
+
+control_plane:
+  hosts:
+    zendikar:
+    dominaria:
+    innistrad:
+
+workers:
+  hosts:
+    zendikar:
+    dominaria:
+    innistrad:
+
+all:
   vars:
     ansible_python_interpreter: /usr/bin/python3
     k8s_major_minor: "1.34"
     k8s_version: "1.34.2-1.1"
+    pod_network_cidr: "10.244.0.0/16"
+    service_cidr: "10.96.0.0/12"
+    cluster_name: "multiverse"

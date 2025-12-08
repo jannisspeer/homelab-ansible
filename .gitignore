@@ -1,0 +1,60 @@
+# Kubernetes admin kubeconfig
+kubeconfig
+ansible/kubeconfig
+
+# SSH keys
+*.pem
+*.key
+id_rsa
+id_rsa.pub
+*.ppk
+
+# Ansible retry files
+*.retry
+
+# Ansible vault password files
+.vault_pass
+vault_pass.txt
+.vault_password
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.so
+.venv/
+venv/
+ENV/
+
+# Terraform (if you add it later)
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Secrets and sensitive data
+secrets/
+*.secret
+*.enc
+credentials.yaml
+
+# Local environment files
+.env
+.env.local
+
+# IDE files
+.vscode/
+.idea/
+*.iml
+
+# Logs
+*.log
+logs/
