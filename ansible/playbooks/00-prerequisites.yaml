@@ -113,6 +113,7 @@
           - kubelet={{ k8s_version }}
           - kubeadm={{ k8s_version }}
           - kubectl={{ k8s_version }}
+          - etcd-client
         state: present
         update_cache: true
 
