@@ -1,0 +1,16 @@
+multiverse:
+  hosts:
+    zendikar:
+      ansible_host: 192.168.194.84
+      ansible_user: planeswalker
+      ansible_ssh_private_key_file: ~/.ssh/homelab
+    dominaria:
+      ansible_host: 192.168.194.168
+      ansible_user: planeswalker
+      ansible_ssh_private_key_file: ~/.ssh/homelab
+    innistrad:
+      ansible_host: 192.168.194.174
+      ansible_user: planeswalker
+      ansible_ssh_private_key_file: ~/.ssh/homelab
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
