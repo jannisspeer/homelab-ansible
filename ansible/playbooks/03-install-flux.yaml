@@ -1,5 +1,5 @@
 ---
-- name: Install and bootstrap Flux
+- name: Install Flux
   hosts: control_plane[0]
   environment:
     KUBECONFIG: /home/{{ ansible_user }}/.kube/config
@@ -77,7 +77,8 @@
     - name: Display Flux installation status
       command: flux check
       register: flux_status
+      changed_when: false
 
     - name: Show Flux status
       debug:
-        var: flux_status.stdout_lines
+        var: flux_status.stderr_lines
