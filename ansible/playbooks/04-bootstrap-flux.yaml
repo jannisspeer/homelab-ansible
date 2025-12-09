@@ -1,8 +1,11 @@
 ---
 - name: Bootstrap Flux
   hosts: control_plane[0]
+  vars_files:
+    - ../flux_secrets.yaml
   environment:
     KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+    GITHUB_TOKEN: "{{ flux_github_token }}"
   tasks:
     - name: Verify kubectl access
       command: kubectl cluster-info
@@ -29,6 +32,7 @@
         --personal \
         --token-auth
       when: flux_bootstrapped == 'false'
+      no_log: true
 
     - name: Display Flux bootstrap status
       command: flux check
