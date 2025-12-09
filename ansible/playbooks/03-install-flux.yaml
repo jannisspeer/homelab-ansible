@@ -1,0 +1,85 @@
+---
+- name: Install and bootstrap Flux
+  hosts: control_plane[0]
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+  tasks:
+    - name: Verify kubectl access
+      command: kubectl cluster-info
+      changed_when: false
+      register: kubectl_check
+      failed_when: kubectl_check.rc != 0
+
+    - name: Check if flux CLI is already installed
+      command: which flux
+      register: flux_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Download Flux install script
+      get_url:
+        url: https://fluxcd.io/install.sh
+        dest: /tmp/install_flux.sh
+        mode: '0755'
+      when: flux_check.rc != 0
+
+    - name: Install Flux CLI
+      command: /tmp/install_flux.sh
+      become: true
+      when: flux_check.rc != 0
+
+    - name: Cleanup Flux install script
+      file:
+        path: /tmp/install_flux.sh
+        state: absent
+      when: flux_check.rc != 0
+
+    - name: Verify Flux CLI installation
+      command: flux --version
+      register: flux_version
+      changed_when: false
+      failed_when: flux_version.rc != 0
+      retries: 3
+      delay: 2
+      until: flux_version.rc == 0
+
+    - name: Display Flux version
+      debug:
+        msg: "Flux CLI version: {{ flux_version.stdout }}"
+
+    - name: Create flux-system namespace
+      kubernetes.core.k8s:
+        name: flux-system
+        api_version: v1
+        kind: Namespace
+        state: present
+
+    - name: Check if Flux is already bootstrapped
+      kubernetes.core.k8s_info:
+        kind: Deployment
+        name: source-controller
+        namespace: flux-system
+      register: flux_bootstrapped
+      ignore_errors: true
+      changed_when: false
+
+    - name: Install Flux components
+      command: flux install
+      when: flux_bootstrapped.resources | length == 0
+      register: flux_install
+      retries: 3
+      delay: 10
+      until: flux_install.rc == 0
+
+    - name: Wait for Flux deployments to be ready
+      command: kubectl wait --for=condition=available --timeout=300s deployment --all -n flux-system
+      when: flux_bootstrapped.resources | length == 0
+      register: flux_ready
+
+    - name: Display Flux installation status
+      command: flux check
+      register: flux_status
+
+    - name: Show Flux status
+      debug:
+        var: flux_status.stdout_lines
