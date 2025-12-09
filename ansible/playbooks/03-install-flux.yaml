@@ -54,24 +54,24 @@
         kind: Namespace
         state: present
 
-    - name: Check if Flux is already bootstrapped
+    - name: Check if Flux is already installed
       kubernetes.core.k8s_info:
         kind: Deployment
         name: source-controller
         namespace: flux-system
-      register: flux_bootstrapped
+      register: flux_installed
       ignore_errors: true
       changed_when: false
 
     - name: Install Flux components
       command: flux install
-      when: flux_bootstrapped.resources | length == 0 or (flux_bootstrapped.resources[0].status.readyReplicas | default(0) == 0)
+      when: flux_installed.resources | length == 0 or (flux_installed.resources[0].status.readyReplicas | default(0) == 0)
       register: flux_install
       until: flux_install.rc == 0
 
     - name: Wait for Flux deployments to be ready
       command: kubectl wait --for=condition=available --timeout=300s deployment --all -n flux-system
-      when: flux_bootstrapped.resources | length == 0
+      when: flux_installed.resources | length == 0
       register: flux_ready
 
     - name: Display Flux installation status
@@ -79,6 +79,6 @@
       register: flux_status
       changed_when: false
 
-    - name: Show Flux status
+    - name: Show Flux installation status
       debug:
         var: flux_status.stderr_lines

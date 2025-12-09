@@ -1,0 +1,40 @@
+---
+- name: Bootstrap Flux
+  hosts: control_plane[0]
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+  tasks:
+    - name: Verify kubectl access
+      command: kubectl cluster-info
+      changed_when: false
+      register: kubectl_check
+      failed_when: kubectl_check.rc != 0
+
+    - name: Check if Flux is already bootstrapped
+      command: flux check
+      register: flux_check_output
+      changed_when: false
+      failed_when: false
+
+    - name: Parse bootstrap status
+      set_fact:
+        flux_bootstrapped: "{{ flux_check_output.stderr | regex_search('bootstrapped: (true|false)', '\\1') | first }}"
+
+    - name: Bootstrap Flux components
+      command: flux bootstrap github \
+        --owner={{ flux_github_owner }} \
+        --repository={{ flux_github_repo }} \
+        --branch={{ flux_github_branch }} \
+        --path={{ flux_github_path }} \
+        --personal \
+        --token-auth
+      when: flux_bootstrapped == 'false'
+
+    - name: Display Flux bootstrap status
+      command: flux check
+      register: flux_status
+      changed_when: false
+
+    - name: Show Flux bootstrap status
+      debug:
+        var: flux_status.stderr_lines
