@@ -5,37 +5,38 @@
     KUBECONFIG: /home/{{ ansible_user }}/.kube/config
   tasks:
     - name: Verify kubectl access
-      command: kubectl cluster-info
+      ansible.builtin.command: kubectl cluster-info
       changed_when: false
       register: kubectl_check
       failed_when: kubectl_check.rc != 0
 
     - name: Check if flux CLI is already installed
-      command: which flux
+      ansible.builtin.command: which flux
       register: flux_check
       ignore_errors: true
       changed_when: false
 
     - name: Download Flux install script
-      get_url:
+      ansible.builtin.get_url:
         url: https://fluxcd.io/install.sh
         dest: /tmp/install_flux.sh
         mode: '0755'
       when: flux_check.rc != 0
 
     - name: Install Flux CLI
-      command: /tmp/install_flux.sh
+      ansible.builtin.command: /tmp/install_flux.sh
       become: true
       when: flux_check.rc != 0
+      changed_when: true
 
     - name: Cleanup Flux install script
-      file:
+      ansible.builtin.file:
         path: /tmp/install_flux.sh
         state: absent
       when: flux_check.rc != 0
 
     - name: Verify Flux CLI installation
-      command: flux --version
+      ansible.builtin.command: flux --version
       register: flux_version
       changed_when: false
       failed_when: flux_version.rc != 0
@@ -44,7 +45,7 @@
       until: flux_version.rc == 0
 
     - name: Display Flux version
-      debug:
+      ansible.builtin.debug:
         msg: "Flux CLI version: {{ flux_version.stdout }}"
 
     - name: Create flux-system namespace
@@ -64,21 +65,23 @@
       changed_when: false
 
     - name: Install Flux components
-      command: flux install
+      ansible.builtin.command: flux install
       when: flux_installed.resources | length == 0 or (flux_installed.resources[0].status.readyReplicas | default(0) == 0)
       register: flux_install
       until: flux_install.rc == 0
+      changed_when: flux_install.rc == 0
 
     - name: Wait for Flux deployments to be ready
-      command: kubectl wait --for=condition=available --timeout=300s deployment --all -n flux-system
+      ansible.builtin.command: kubectl wait --for=condition=available --timeout=300s deployment --all -n flux-system
       when: flux_installed.resources | length == 0
       register: flux_ready
+      changed_when: false
 
     - name: Display Flux installation status
-      command: flux check
+      ansible.builtin.command: flux check
       register: flux_status
       changed_when: false
 
     - name: Show Flux installation status
-      debug:
+      ansible.builtin.debug:
         var: flux_status.stderr_lines

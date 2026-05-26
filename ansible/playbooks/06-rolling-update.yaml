@@ -11,16 +11,16 @@
 
   tasks:
     - name: Check if node is part of Kubernetes cluster
-      stat:
+      ansible.builtin.stat:
         path: /etc/kubernetes/kubelet.conf
       register: k8s_conf
 
-    - name: Set Kubernetes Node Name
-      set_fact:
+    - name: Set Kubernetes node name
+      ansible.builtin.set_fact:
         k8s_node_name: "{{ inventory_hostname | lower }}"
 
     - name: Drain node
-      command: >
+      ansible.builtin.command: >
         kubectl drain {{ k8s_node_name }}
         --ignore-daemonsets
         --delete-emptydir-data
@@ -32,36 +32,37 @@
         KUBECONFIG: "/home/{{ ansible_user }}/.kube/config"
       when: k8s_conf.stat.exists
       register: drain_result
+      changed_when: drain_result.rc == 0
       failed_when: drain_result.rc != 0
 
     - name: Hold Kubernetes packages (prevent version skew)
-      dpkg_selections:
+      ansible.builtin.dpkg_selections:
         name: "{{ item }}"
         selection: hold
       loop: "{{ k8s_packages }}"
 
     - name: Update apt cache
-      apt:
-        update_cache: yes
+      ansible.builtin.apt:
+        update_cache: true
         cache_valid_time: 3600
 
-    - name: Upgrade System
-      apt:
+    - name: Upgrade system packages
+      ansible.builtin.apt:
         upgrade: dist
-        autoremove: yes
-        autoclean: yes
+        autoremove: true
+        autoclean: true
       register: apt_upgrade
       retries: 3
       delay: 5
       until: apt_upgrade is success
 
     - name: Check if reboot is required
-      stat:
+      ansible.builtin.stat:
         path: /var/run/reboot-required
       register: reboot_required
 
     - name: Reboot the node
-      reboot:
+      ansible.builtin.reboot:
         msg: "Rebooting for updates via Ansible"
         connect_timeout: 5
         reboot_timeout: 600
@@ -69,20 +70,20 @@
       when: reboot_required.stat.exists
 
     - name: Wait for connection
-      wait_for_connection:
+      ansible.builtin.wait_for_connection:
         delay: 10
         timeout: 300
       when: reboot_required.stat.exists
 
     - name: Wait for kubelet to start
-      service:
+      ansible.builtin.service:
         name: kubelet
         state: started
       when: k8s_conf.stat.exists and reboot_required.stat.exists
 
-    - name: Wait for K8s Node Ready status
-      shell: >
-        kubectl get node {{ k8s_node_name }} 
+    - name: Wait for K8s node Ready status
+      ansible.builtin.shell: >
+        kubectl get node {{ k8s_node_name }}
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
       delegate_to: "{{ groups['control_plane'][0] }}"
       become_user: "{{ ansible_user }}"
@@ -93,17 +94,19 @@
       retries: 30
       delay: 10
       when: k8s_conf.stat.exists
+      changed_when: false
 
     - name: Uncordon node
-      command: kubectl uncordon {{ k8s_node_name }}
+      ansible.builtin.command: kubectl uncordon {{ k8s_node_name }}
       delegate_to: "{{ groups['control_plane'][0] }}"
       become_user: "{{ ansible_user }}"
       environment:
         KUBECONFIG: "/home/{{ ansible_user }}/.kube/config"
       when: k8s_conf.stat.exists
+      changed_when: true
 
-    - name: Brief Pause for Stability
-      pause:
+    - name: Brief pause for stability
+      ansible.builtin.pause:
         seconds: 15
       when: k8s_conf.stat.exists
 
@@ -112,22 +115,22 @@
   become: true
   tasks:
     - name: Verify all nodes are accessible
-      ping:
+      ansible.builtin.ping:
 
     - name: Check system uptime
-      command: uptime
+      ansible.builtin.command: uptime
       register: system_uptime
       changed_when: false
 
     - name: Display uptime
-      debug:
+      ansible.builtin.debug:
         msg: "{{ inventory_hostname }}: {{ system_uptime.stdout }}"
 
 - name: Verify cluster health
   hosts: control_plane
   tasks:
     - name: Check all nodes status
-      shell: kubectl get nodes -o wide
+      ansible.builtin.shell: kubectl get nodes -o wide
       become_user: "{{ ansible_user }}"
       environment:
         KUBECONFIG: /home/{{ ansible_user }}/.kube/config
@@ -136,13 +139,13 @@
       changed_when: false
 
     - name: Display final cluster status
-      debug:
+      ansible.builtin.debug:
         var: final_cluster_status.stdout_lines
       run_once: true
       when: final_cluster_status.rc == 0
 
     - name: Check pod status
-      shell: kubectl get pods --all-namespaces | grep -v "Running\|Completed" || echo "All pods running"
+      ansible.builtin.shell: kubectl get pods --all-namespaces | grep -v "Running\|Completed" || echo "All pods running"
       become_user: "{{ ansible_user }}"
       environment:
         KUBECONFIG: /home/{{ ansible_user }}/.kube/config
@@ -151,7 +154,7 @@
       changed_when: false
 
     - name: Display pod status
-      debug:
+      ansible.builtin.debug:
         msg: "{{ pod_status.stdout_lines }}"
       run_once: true
       when: pod_status.rc == 0
