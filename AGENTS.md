@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Ansible project that provisions and manages a 3-node bare-metal Kubernetes cluster on a homelab. All three nodes serve as both control plane and workers (taints removed). Application deployment is handled by Flux CD, connected to the companion GitOps repository `jannisspeer/homelab-flux`.
+Ansible project that provisions and manages a 3-node bare-metal Kubernetes cluster on a homelab. All three nodes serve as both control plane and workers (taints removed). Application deployment is handled by Flux CD, connected to a companion GitOps repository.
 
 **Stack:** kubeadm, containerd, Flannel CNI, Flux CD, Grafana
 
@@ -27,19 +27,9 @@ There are no roles, `ansible.cfg`, `group_vars/`, or `host_vars/` directories. A
 
 ## Infrastructure
 
-**Nodes (Debian/Ubuntu, apt-based):**
+3 Debian/Ubuntu (apt-based) nodes, each serving as control plane + worker. Python is managed via Miniconda at `/opt/miniconda3/envs/ansible/`.
 
-| Hostname   | LAN IP            | K8s Network IP | Role                    |
-|------------|-------------------|----------------|-------------------------|
-| zendikar   | 192.168.194.84    | 172.20.20.5    | control plane + worker  |
-| dominaria  | 192.168.194.168   | 172.20.20.3    | control plane + worker  |
-| innistrad  | 192.168.194.174   | 172.20.20.4    | control plane + worker  |
-
-- **SSH user:** `planeswalker`, key: `~/.ssh/homelab`
-- **Python:** Miniconda 3.13 at `/opt/miniconda3/envs/ansible/`
-- **Pod CIDR:** `10.244.0.0/16`
-- **Service CIDR:** `10.96.0.0/12`
-- **Flux target:** `jannisspeer/homelab-flux`, branch `main`, path `./clusters/kubernetes`
+**All host-specific values** -- node hostnames, LAN IPs, Kubernetes network IPs, SSH user and key, pod/service CIDRs, and Flux GitOps target -- are defined in `ansible/inventory.yaml`. Always consult that file for current infrastructure details.
 
 ## Conventions
 
@@ -81,7 +71,7 @@ ansible-playbook ansible/playbooks/00-prerequisites.yaml -K
 ansible-playbook ansible/playbooks/04-bootstrap-flux.yaml -K -J
 
 # Example: reset a specific node
-ansible-playbook ansible/playbooks/02-reset-node.yaml -e "target_node=innistrad" -K
+ansible-playbook ansible/playbooks/02-reset-node.yaml -e "target_node=<HOSTNAME>" -K
 ```
 
 ## Warnings
