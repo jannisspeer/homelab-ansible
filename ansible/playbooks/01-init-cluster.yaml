@@ -2,6 +2,8 @@
 - name: Initialize Kubernetes control plane (first node)
   hosts: control_plane
   become: true
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
   tasks:
     - name: Check if cluster is already initialized
       ansible.builtin.stat:
@@ -21,47 +23,13 @@
       changed_when: kubeadm_init.rc == 0
       failed_when: kubeadm_init.rc != 0
 
-    - name: Create .kube directory for root
-      ansible.builtin.file:
-        path: /root/.kube
-        state: directory
-        mode: '0755'
-      when: inventory_hostname == groups['control_plane'][0]
-
-    - name: Copy kubeconfig for root
-      ansible.builtin.copy:
-        src: /etc/kubernetes/admin.conf
-        dest: /root/.kube/config
-        remote_src: true
-        owner: root
-        group: root
-        mode: '0600'
-      when: inventory_hostname == groups['control_plane'][0]
-
-    - name: Create .kube directory for user
-      ansible.builtin.file:
-        path: /home/{{ ansible_user }}/.kube
-        state: directory
-        owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
-        mode: '0755'
-      when: inventory_hostname == groups['control_plane'][0]
-
-    - name: Copy kubeconfig for user
-      ansible.builtin.copy:
-        src: /etc/kubernetes/admin.conf
-        dest: /home/{{ ansible_user }}/.kube/config
-        remote_src: true
-        owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
-        mode: '0600'
+    - name: Set up kubeconfig for root and user
+      ansible.builtin.include_tasks: ../tasks/setup-kubeconfig.yaml
       when: inventory_hostname == groups['control_plane'][0]
 
     - name: Wait for kube-apiserver to be ready
       ansible.builtin.shell: kubectl get nodes
       become_user: "{{ ansible_user }}"
-      environment:
-        KUBECONFIG: /home/{{ ansible_user }}/.kube/config
       register: api_check
       until: api_check.rc == 0
       retries: 30
@@ -79,8 +47,6 @@
     - name: Install Flannel CNI
       ansible.builtin.shell: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
       become_user: "{{ ansible_user }}"
-      environment:
-        KUBECONFIG: /home/{{ ansible_user }}/.kube/config
       when: inventory_hostname == groups['control_plane'][0]
       register: flannel_install
       changed_when: "'created' in flannel_install.stdout or 'configured' in flannel_install.stdout"
@@ -88,8 +54,6 @@
     - name: Wait for Flannel pods to be ready
       ansible.builtin.shell: kubectl wait --for=condition=Ready pod -l app=flannel -n kube-flannel --timeout=300s
       become_user: "{{ ansible_user }}"
-      environment:
-        KUBECONFIG: /home/{{ ansible_user }}/.kube/config
       when: inventory_hostname == groups['control_plane'][0]
       retries: 3
       delay: 10
@@ -161,40 +125,8 @@
         enabled: true
       when: inventory_hostname != groups['control_plane'][0]
 
-    - name: Create .kube directory for root on additional nodes
-      ansible.builtin.file:
-        path: /root/.kube
-        state: directory
-        mode: '0755'
-      when: inventory_hostname != groups['control_plane'][0]
-
-    - name: Copy kubeconfig for root on additional nodes
-      ansible.builtin.copy:
-        src: /etc/kubernetes/admin.conf
-        dest: /root/.kube/config
-        remote_src: true
-        owner: root
-        group: root
-        mode: '0600'
-      when: inventory_hostname != groups['control_plane'][0]
-
-    - name: Create .kube directory for user on additional nodes
-      ansible.builtin.file:
-        path: /home/{{ ansible_user }}/.kube
-        state: directory
-        owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
-        mode: '0755'
-      when: inventory_hostname != groups['control_plane'][0]
-
-    - name: Copy kubeconfig for user on additional nodes
-      ansible.builtin.copy:
-        src: /etc/kubernetes/admin.conf
-        dest: /home/{{ ansible_user }}/.kube/config
-        remote_src: true
-        owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
-        mode: '0600'
+    - name: Set up kubeconfig for root and user on additional nodes
+      ansible.builtin.include_tasks: ../tasks/setup-kubeconfig.yaml
       when: inventory_hostname != groups['control_plane'][0]
 
     - name: Clean up join command
@@ -212,16 +144,16 @@
 
 - name: Remove control plane taints to allow workload scheduling
   hosts: control_plane
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
   tasks:
     - name: Wait for all nodes to be registered
       ansible.builtin.shell: kubectl get nodes --no-headers | wc -l
+      become_user: "{{ ansible_user }}"
       register: node_count
       until: node_count.stdout | int == groups['control_plane'] | length
       retries: 30
       delay: 2
-      become_user: "{{ ansible_user }}"
-      environment:
-        KUBECONFIG: /home/{{ ansible_user }}/.kube/config
       run_once: true
       changed_when: false
 
@@ -229,20 +161,18 @@
       ansible.builtin.shell: |
         kubectl taint nodes {{ inventory_hostname }} node-role.kubernetes.io/control-plane:NoSchedule- || true
       become_user: "{{ ansible_user }}"
-      environment:
-        KUBECONFIG: /home/{{ ansible_user }}/.kube/config
       delegate_to: "{{ groups['control_plane'][0] }}"
       run_once: false
       changed_when: false
 
 - name: Validate cluster health
   hosts: control_plane
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
   tasks:
     - name: Check all nodes are Ready
       ansible.builtin.shell: kubectl get nodes -o wide
       become_user: "{{ ansible_user }}"
-      environment:
-        KUBECONFIG: /home/{{ ansible_user }}/.kube/config
       register: cluster_nodes
       run_once: true
       changed_when: false
@@ -261,6 +191,7 @@
           --key=/etc/kubernetes/pki/etcd/server.key \
           endpoint health 2>&1
       become: true
+      become_user: root
       register: etcd_health
       run_once: true
       ignore_errors: true

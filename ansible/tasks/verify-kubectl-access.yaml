@@ -1,0 +1,6 @@
+---
+- name: Verify kubectl access
+  ansible.builtin.command: kubectl cluster-info
+  changed_when: false
+  register: kubectl_check
+  failed_when: kubectl_check.rc != 0

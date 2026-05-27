@@ -3,6 +3,8 @@
   hosts: all
   become: true
   serial: 1
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
   vars:
     k8s_packages:
       - kubelet
@@ -28,8 +30,6 @@
         --timeout=300s
       delegate_to: "{{ groups['control_plane'][0] }}"
       become_user: "{{ ansible_user }}"
-      environment:
-        KUBECONFIG: "/home/{{ ansible_user }}/.kube/config"
       when: k8s_conf.stat.exists
       register: drain_result
       changed_when: drain_result.rc == 0
@@ -87,8 +87,6 @@
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
       delegate_to: "{{ groups['control_plane'][0] }}"
       become_user: "{{ ansible_user }}"
-      environment:
-        KUBECONFIG: "/home/{{ ansible_user }}/.kube/config"
       register: node_ready
       until: node_ready.stdout == "True"
       retries: 30
@@ -100,8 +98,6 @@
       ansible.builtin.command: kubectl uncordon {{ k8s_node_name }}
       delegate_to: "{{ groups['control_plane'][0] }}"
       become_user: "{{ ansible_user }}"
-      environment:
-        KUBECONFIG: "/home/{{ ansible_user }}/.kube/config"
       when: k8s_conf.stat.exists
       changed_when: true
 
@@ -128,12 +124,12 @@
 
 - name: Verify cluster health
   hosts: control_plane
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
   tasks:
     - name: Check all nodes status
       ansible.builtin.shell: kubectl get nodes -o wide
       become_user: "{{ ansible_user }}"
-      environment:
-        KUBECONFIG: /home/{{ ansible_user }}/.kube/config
       register: final_cluster_status
       run_once: true
       changed_when: false
@@ -147,8 +143,6 @@
     - name: Check pod status
       ansible.builtin.shell: kubectl get pods --all-namespaces | grep -v "Running\|Completed" || echo "All pods running"
       become_user: "{{ ansible_user }}"
-      environment:
-        KUBECONFIG: /home/{{ ansible_user }}/.kube/config
       register: pod_status
       run_once: true
       changed_when: false

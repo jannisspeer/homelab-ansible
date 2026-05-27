@@ -3,15 +3,7 @@
   hosts: "{{ target_node }}"
   become: true
   vars:
-    # Kubernetes configuration
     k8s_reset_command: "kubeadm reset --force --cri-socket unix:///var/run/containerd/containerd.sock"
-    k8s_cleanup_packages:
-      - kubeadm
-      - kubectl
-      - kubelet
-      - kubernetes-cni
-      - containerd
-      - cri-tools
     k8s_cleanup_directories:
       - /etc/kubernetes
       - /var/lib/kubelet

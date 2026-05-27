@@ -1,0 +1,9 @@
+---
+- name: Display Flux status
+  ansible.builtin.command: flux check
+  register: flux_status
+  changed_when: false
+
+- name: Show Flux status
+  ansible.builtin.debug:
+    var: flux_status.stderr_lines

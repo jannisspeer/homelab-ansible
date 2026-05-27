@@ -8,10 +8,7 @@
     GITHUB_TOKEN: "{{ flux_github_token }}"
   tasks:
     - name: Verify kubectl access
-      ansible.builtin.command: kubectl cluster-info
-      changed_when: false
-      register: kubectl_check
-      failed_when: kubectl_check.rc != 0
+      ansible.builtin.include_tasks: ../tasks/verify-kubectl-access.yaml
 
     - name: Check if Flux is already bootstrapped
       ansible.builtin.command: flux check
@@ -36,10 +33,4 @@
       changed_when: true
 
     - name: Display Flux bootstrap status
-      ansible.builtin.command: flux check
-      register: flux_status
-      changed_when: false
-
-    - name: Show Flux bootstrap status
-      ansible.builtin.debug:
-        var: flux_status.stderr_lines
+      ansible.builtin.include_tasks: ../tasks/flux-check.yaml
