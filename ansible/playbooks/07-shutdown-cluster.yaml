@@ -1,0 +1,113 @@
+---
+- name: Gracefully drain and prepare cluster for shutdown
+  hosts: control_plane[0]
+  gather_facts: false
+  become: true
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+  vars:
+    shutdown_drain_nodes: true
+    shutdown_message: "Cluster shutdown initiated by Ansible"
+    primary_control_plane: "{{ groups['control_plane'][0] }}"
+    secondary_nodes: "{{ groups['all'] | difference([primary_control_plane]) }}"
+
+  tasks:
+    - name: Verify kubectl access from primary control plane
+      ansible.builtin.command: kubectl cluster-info
+      become_user: "{{ ansible_user }}"
+      register: kubectl_access
+      changed_when: false
+      failed_when: kubectl_access.rc != 0
+
+    - name: Check current cluster node status
+      ansible.builtin.command: kubectl get nodes -o wide
+      become_user: "{{ ansible_user }}"
+      register: cluster_nodes_before_shutdown
+      changed_when: false
+      failed_when: cluster_nodes_before_shutdown.rc != 0
+
+    - name: Display cluster node status before shutdown
+      ansible.builtin.debug:
+        var: cluster_nodes_before_shutdown.stdout_lines
+
+    - name: Cordon secondary nodes
+      ansible.builtin.command: kubectl cordon {{ item }}
+      become_user: "{{ ansible_user }}"
+      loop: "{{ secondary_nodes }}"
+      when: shutdown_drain_nodes
+      register: cordon_secondary_nodes
+      changed_when: cordon_secondary_nodes.rc == 0 and ('already cordoned' not in (cordon_secondary_nodes.stdout | lower))
+      failed_when: false
+
+    - name: Drain secondary nodes (best effort)
+      ansible.builtin.command: >
+        kubectl drain {{ item }}
+        --ignore-daemonsets
+        --delete-emptydir-data
+        --grace-period=30
+        --timeout=300s
+      become_user: "{{ ansible_user }}"
+      loop: "{{ secondary_nodes }}"
+      when: shutdown_drain_nodes
+      register: drain_secondary_nodes
+      changed_when: drain_secondary_nodes.rc == 0
+      failed_when: false
+
+    - name: Cordon primary control plane node
+      ansible.builtin.command: kubectl cordon {{ primary_control_plane }}
+      become_user: "{{ ansible_user }}"
+      when: shutdown_drain_nodes
+      register: cordon_primary_node
+      changed_when: cordon_primary_node.rc == 0 and ('already cordoned' not in (cordon_primary_node.stdout | lower))
+      failed_when: false
+
+    - name: Drain primary control plane node (best effort)
+      ansible.builtin.command: >
+        kubectl drain {{ primary_control_plane }}
+        --ignore-daemonsets
+        --delete-emptydir-data
+        --grace-period=30
+        --timeout=300s
+      become_user: "{{ ansible_user }}"
+      when: shutdown_drain_nodes
+      register: drain_primary_node
+      changed_when: drain_primary_node.rc == 0
+      failed_when: false
+
+- name: Shutdown secondary nodes
+  hosts: all
+  gather_facts: false
+  become: true
+  vars:
+    shutdown_message: "Cluster shutdown initiated by Ansible"
+    primary_control_plane: "{{ groups['control_plane'][0] }}"
+
+  tasks:
+    - name: Send shutdown command to secondary nodes
+      ansible.builtin.command: shutdown -h now {{ shutdown_message | quote }}
+      async: 120
+      poll: 0
+      when: inventory_hostname != primary_control_plane
+      register: secondary_shutdown_command
+      changed_when: secondary_shutdown_command.rc == 0
+      failed_when: false
+
+- name: Shutdown primary control plane node last
+  hosts: control_plane[0]
+  gather_facts: false
+  become: true
+  vars:
+    shutdown_message: "Cluster shutdown initiated by Ansible"
+
+  tasks:
+    - name: Pause briefly before shutting down primary node
+      ansible.builtin.pause:
+        seconds: 15
+
+    - name: Send shutdown command to primary control plane node
+      ansible.builtin.command: shutdown -h now {{ shutdown_message | quote }}
+      async: 120
+      poll: 0
+      register: primary_shutdown_command
+      changed_when: primary_shutdown_command.rc == 0
+      failed_when: false

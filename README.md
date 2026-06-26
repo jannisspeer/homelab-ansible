@@ -21,6 +21,8 @@ ansible/
     04-bootstrap-flux.yaml    # Bootstrap Flux GitOps from GitHub
     05-setup-grafana-secret.yaml  # Create Grafana admin credentials secret
     06-rolling-update.yaml    # Rolling OS updates across all nodes
+    07-shutdown-cluster.yaml  # Gracefully drain and power off the cluster
+    08-start-cluster.yaml     # Recover cluster after manual power-on
   secrets/                    # Vault-encrypted secret files
 setup.sh                      # Sets ANSIBLE_INVENTORY env var
 ```
@@ -79,6 +81,38 @@ ansible-playbook ansible/playbooks/05-setup-grafana-secret.yaml -K -J
 
 # Rolling OS update across all nodes
 ansible-playbook ansible/playbooks/06-rolling-update.yaml -K
+
+# Gracefully drain and shut down the cluster
+ansible-playbook ansible/playbooks/07-shutdown-cluster.yaml -K
+
+# Recover cluster after manual power-on
+ansible-playbook ansible/playbooks/08-start-cluster.yaml -K
+```
+
+### Shutdown and restart the cluster
+
+Use the shutdown and startup playbooks as an operational pair.
+
+```bash
+# 1) Source inventory environment
+source setup.sh
+
+# 2) Gracefully drain workloads and power off nodes
+ansible-playbook ansible/playbooks/07-shutdown-cluster.yaml -K
+
+# 3) Manually power on all nodes (out-of-band)
+#    Wait until SSH is reachable on every node.
+
+# 4) Run startup recovery playbook
+#    This playbook prompts interactively before continuing.
+ansible-playbook ansible/playbooks/08-start-cluster.yaml -K
+```
+
+After startup completes, verify cluster health:
+
+```bash
+kubectl get nodes -o wide
+kubectl get pods --all-namespaces
 ```
 
 ### Issues: Remove a Stale etcd Member

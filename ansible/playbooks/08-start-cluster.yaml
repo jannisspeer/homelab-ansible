@@ -1,0 +1,121 @@
+---
+- name: Confirm manual startup before cluster recovery
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Confirm all nodes are powered on
+      ansible.builtin.pause:
+        prompt: "Ensure all cluster nodes are powered on, then press Enter to continue"
+
+- name: Wait for nodes and recover core services
+  hosts: multiverse
+  gather_facts: false
+  become: true
+  vars:
+    startup_wait_timeout: 900
+    startup_wait_delay: 10
+    startup_wait_sleep: 5
+
+  tasks:
+    - name: Wait for node connectivity
+      ansible.builtin.wait_for_connection:
+        timeout: "{{ startup_wait_timeout }}"
+        delay: "{{ startup_wait_delay }}"
+        sleep: "{{ startup_wait_sleep }}"
+
+    - name: Ensure containerd service is enabled and started
+      ansible.builtin.systemd:
+        name: containerd
+        enabled: true
+        state: started
+
+    - name: Ensure kubelet service is enabled and started
+      ansible.builtin.systemd:
+        name: kubelet
+        enabled: true
+        state: started
+
+    - name: Pause briefly for kubelet stabilization
+      ansible.builtin.pause:
+        seconds: 10
+
+- name: Restore cluster scheduling and validate health
+  hosts: control_plane[0]
+  gather_facts: false
+  become: true
+  environment:
+    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
+  vars:
+    startup_readiness_retries: 60
+    startup_readiness_delay: 10
+    cluster_nodes: "{{ (groups['control_plane'] + groups['workers']) | unique }}"
+    expected_node_count: "{{ cluster_nodes | length }}"
+
+  tasks:
+    - name: Verify kubectl access from primary control plane
+      ansible.builtin.command: kubectl cluster-info
+      become_user: "{{ ansible_user }}"
+      register: kubectl_access
+      changed_when: false
+      failed_when: kubectl_access.rc != 0
+
+    - name: Wait for all cluster nodes to report Ready
+      ansible.builtin.shell: >
+        kubectl get nodes --no-headers 2>/dev/null |
+        awk '$2 == "Ready" {count++} END {print count+0}'
+      become_user: "{{ ansible_user }}"
+      register: ready_node_count
+      until: ready_node_count.stdout | int == expected_node_count | int
+      retries: "{{ startup_readiness_retries }}"
+      delay: "{{ startup_readiness_delay }}"
+      changed_when: false
+      failed_when: ready_node_count.rc != 0
+
+    - name: Uncordon all cluster nodes
+      ansible.builtin.command: kubectl uncordon {{ item }}
+      become_user: "{{ ansible_user }}"
+      loop: "{{ cluster_nodes }}"
+      register: uncordon_nodes
+      changed_when: uncordon_nodes.rc == 0 and ('already uncordoned' not in (uncordon_nodes.stdout | lower))
+      failed_when: false
+
+    - name: Check cluster node status after startup
+      ansible.builtin.command: kubectl get nodes -o wide
+      become_user: "{{ ansible_user }}"
+      register: cluster_nodes_after_startup
+      changed_when: false
+      failed_when: cluster_nodes_after_startup.rc != 0
+
+    - name: Display cluster node status after startup
+      ansible.builtin.debug:
+        var: cluster_nodes_after_startup.stdout_lines
+
+    - name: Check for pods not in Running or Completed state
+      ansible.builtin.shell: >
+        kubectl get pods --all-namespaces --no-headers |
+        grep -Ev ' (Running|Completed) ' || true
+      become_user: "{{ ansible_user }}"
+      register: non_running_pods
+      changed_when: false
+      failed_when: false
+
+    - name: Display non-running pod status
+      ansible.builtin.debug:
+        msg: "{{ non_running_pods.stdout_lines | default(['All pods are Running or Completed']) }}"
+
+    - name: Check etcd endpoint health (best effort)
+      ansible.builtin.shell: |
+        ETCDCTL_API=3 etcdctl \
+          --endpoints=https://127.0.0.1:2379 \
+          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+          --cert=/etc/kubernetes/pki/etcd/server.crt \
+          --key=/etc/kubernetes/pki/etcd/server.key \
+          endpoint health 2>&1
+      become_user: root
+      register: etcd_health
+      changed_when: false
+      failed_when: false
+
+    - name: Display etcd health output
+      ansible.builtin.debug:
+        msg: "{{ etcd_health.stdout | default('etcd health check did not return output') }}"

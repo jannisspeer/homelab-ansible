@@ -11,7 +11,7 @@ Ansible project that provisions and manages a 3-node bare-metal Kubernetes clust
 ```
 ansible/
   inventory.yaml          # Single inventory file with all hosts and variables
-  playbooks/              # Numbered playbooks (00-06), executed sequentially
+  playbooks/              # Numbered playbooks (00-08), executed sequentially
     00-prerequisites.yaml   # System packages, containerd, kubeadm/kubelet/kubectl
     01-init-cluster.yaml    # Initialize cluster, join nodes, install Flannel
     02-reset-node.yaml      # Destructively remove a node from the cluster
@@ -19,6 +19,8 @@ ansible/
     04-bootstrap-flux.yaml  # Bootstrap Flux GitOps from GitHub
     05-setup-grafana-secret.yaml  # Create Grafana admin credentials secret
     06-rolling-update.yaml  # Rolling OS updates across all nodes
+    07-shutdown-cluster.yaml  # Gracefully drain and power off the cluster
+    08-start-cluster.yaml    # Recover cluster after manual power-on
   secrets/                # Vault-encrypted secret files (never commit plaintext)
 setup.sh                  # Sets ANSIBLE_INVENTORY env var
 ```
@@ -72,10 +74,18 @@ ansible-playbook ansible/playbooks/04-bootstrap-flux.yaml -K -J
 
 # Example: reset a specific node
 ansible-playbook ansible/playbooks/02-reset-node.yaml -e "target_node=<HOSTNAME>" -K
+
+# Example: graceful cluster shutdown
+ansible-playbook ansible/playbooks/07-shutdown-cluster.yaml -K
+
+# Example: cluster startup recovery (interactive prompt)
+ansible-playbook ansible/playbooks/08-start-cluster.yaml -K
 ```
 
 ## Warnings
 
 - **`02-reset-node.yaml`** is destructive -- it fully drains, removes, and wipes a node from the cluster
 - **`06-rolling-update.yaml`** performs rolling reboots -- nodes are drained and updated one at a time, never simultaneously
+- **`07-shutdown-cluster.yaml`** is disruptive -- it cordons/drains nodes and powers off all cluster nodes (primary control plane shuts down last)
+- **`08-start-cluster.yaml`** requires manual node power-on before execution and includes an interactive confirmation prompt
 - Always validate cluster health after any changes (`kubectl get nodes`, etcd health checks)
