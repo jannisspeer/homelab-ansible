@@ -89,7 +89,7 @@
       poll: 0
       when: inventory_hostname != primary_control_plane
       register: secondary_shutdown_command
-      changed_when: secondary_shutdown_command.rc == 0
+      changed_when: secondary_shutdown_command.started | default(false)
       failed_when: false
 
 - name: Shutdown primary control plane node last
@@ -109,5 +109,5 @@
       async: 120
       poll: 0
       register: primary_shutdown_command
-      changed_when: primary_shutdown_command.rc == 0
+      changed_when: primary_shutdown_command.started | default(false)
       failed_when: false
