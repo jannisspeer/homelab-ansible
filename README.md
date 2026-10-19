@@ -23,6 +23,7 @@ ansible/
     06-rolling-update.yaml    # Rolling OS updates across all nodes
     07-shutdown-cluster.yaml  # Gracefully drain and power off the cluster
     08-start-cluster.yaml     # Recover cluster after manual power-on
+    09-upgrade-kubernetes.yaml # Upgrade kubeadm, kubelet, and kubectl
   secrets/                    # Vault-encrypted secret files
 setup.sh                      # Sets ANSIBLE_INVENTORY env var
 ```
@@ -87,6 +88,9 @@ ansible-playbook ansible/playbooks/07-shutdown-cluster.yaml -K
 
 # Recover cluster after manual power-on
 ansible-playbook ansible/playbooks/08-start-cluster.yaml -K
+
+# Upgrade Kubernetes through each required minor release
+ansible-playbook ansible/playbooks/09-upgrade-kubernetes.yaml -K
 ```
 
 ### Shutdown and restart the cluster

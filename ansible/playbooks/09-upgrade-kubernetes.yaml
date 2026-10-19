@@ -1,0 +1,147 @@
+---
+- name: Upgrade Kubernetes control-plane nodes one minor release at a time
+  hosts: localhost
+  gather_facts: false
+  vars:
+    primary_control_plane: "{{ groups['control_plane'][0] }}"
+    cluster_node_count: "{{ groups['control_plane'] | length }}"
+    kubectl_environment:
+      KUBECONFIG: "/home/{{ hostvars[primary_control_plane].ansible_user }}/.kube/config"
+
+  tasks:
+    - name: Verify kubectl access from the primary control plane
+      ansible.builtin.command: kubectl cluster-info
+      delegate_to: "{{ primary_control_plane }}"
+      become: true
+      become_user: "{{ hostvars[primary_control_plane].ansible_user }}"
+      environment: "{{ kubectl_environment }}"
+      register: kubectl_access
+      changed_when: false
+      failed_when: kubectl_access.rc != 0
+
+    - name: Read the kubelet versions across the cluster
+      ansible.builtin.shell: >-
+        set -o pipefail;
+        kubectl get nodes -o jsonpath='{range .items[*]}{.status.nodeInfo.kubeletVersion}{"\n"}{end}' |
+        sort -V | head -n 1
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ primary_control_plane }}"
+      become: true
+      become_user: "{{ hostvars[primary_control_plane].ansible_user }}"
+      environment: "{{ kubectl_environment }}"
+      register: oldest_node_version
+      changed_when: false
+      failed_when: oldest_node_version.rc != 0 or oldest_node_version.stdout | length == 0
+
+    - name: Record current and requested Kubernetes versions
+      ansible.builtin.set_fact:
+        current_k8s_version: "{{ oldest_node_version.stdout | regex_replace('^v', '') }}"
+        current_k8s_major: "{{ oldest_node_version.stdout | regex_replace('^v', '') | regex_replace('\\..*$', '') | int }}"
+        current_k8s_minor: "{{ oldest_node_version.stdout | regex_replace('^v', '') | regex_replace('^[0-9]+\\.', '') | regex_replace('\\..*$', '') | int }}"
+        target_k8s_version: "{{ k8s_version.split('-')[0] }}"
+        requested_k8s_package_version: "{{ k8s_version }}"
+        target_k8s_major: "{{ k8s_version.split('-')[0].split('.')[0] | int }}"
+        target_k8s_minor: "{{ k8s_version.split('-')[0].split('.')[1] | int }}"
+
+    - name: Validate the requested Kubernetes version
+      ansible.builtin.assert:
+        that:
+          - k8s_version is match('^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.[0-9]+$')
+          - k8s_major_minor == (target_k8s_version.split('.')[0:2] | join('.'))
+          - current_k8s_major | int == target_k8s_major | int
+          - target_k8s_minor | int >= current_k8s_minor | int
+        fail_msg: >-
+          Target {{ k8s_version }} must be a valid package version in the
+          {{ k8s_major_minor }} repository and cannot be older than the
+          oldest node version {{ current_k8s_version }}. Kubernetes major
+          version upgrades are not supported by this playbook.
+
+    - name: Build the ordered Kubernetes minor-version upgrade sequence
+      ansible.builtin.set_fact:
+        k8s_upgrade_minor_versions: >-
+          {{ [] if current_k8s_version == target_k8s_version else
+             ([target_k8s_minor | int] if target_k8s_minor | int == current_k8s_minor | int else
+              range(current_k8s_minor | int + 1, target_k8s_minor | int + 1) | list) }}
+
+    - name: Verify all cluster nodes are Ready before starting the upgrade
+      ansible.builtin.shell: >-
+        set -o pipefail;
+        kubectl get nodes --no-headers |
+        awk '$2 == "Ready" {count++} END {print count+0}'
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ primary_control_plane }}"
+      become: true
+      become_user: "{{ hostvars[primary_control_plane].ansible_user }}"
+      environment: "{{ kubectl_environment }}"
+      register: ready_node_count
+      changed_when: false
+      failed_when: ready_node_count.rc != 0
+      when: k8s_upgrade_minor_versions | length > 0
+
+    - name: Stop if any cluster node is not Ready
+      ansible.builtin.assert:
+        that:
+          - ready_node_count.stdout | int == cluster_node_count | int
+        fail_msg: >-
+          Expected {{ cluster_node_count }} Ready nodes but found
+          {{ ready_node_count.stdout }}. Restore cluster health before upgrading.
+      when: k8s_upgrade_minor_versions | length > 0
+
+    - name: Verify the cluster is healthy before starting any upgrade
+      ansible.builtin.command: kubectl get nodes -o wide
+      delegate_to: "{{ primary_control_plane }}"
+      become: true
+      become_user: "{{ hostvars[primary_control_plane].ansible_user }}"
+      environment: "{{ kubectl_environment }}"
+      register: initial_cluster_status
+      changed_when: false
+      failed_when: initial_cluster_status.rc != 0
+      when: k8s_upgrade_minor_versions | length > 0
+
+    - name: Display the initial cluster status
+      ansible.builtin.debug:
+        var: initial_cluster_status.stdout_lines
+      when: k8s_upgrade_minor_versions | length > 0
+
+    - name: Create an etcd snapshot before changing the cluster
+      ansible.builtin.command:
+        argv:
+          - etcdctl
+          - --endpoints=https://127.0.0.1:2379
+          - --cacert=/etc/kubernetes/pki/etcd/ca.crt
+          - --cert=/etc/kubernetes/pki/etcd/server.crt
+          - --key=/etc/kubernetes/pki/etcd/server.key
+          - snapshot
+          - save
+          - "/root/etcd-snapshot-{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}.db"
+      delegate_to: "{{ primary_control_plane }}"
+      become: true
+      environment:
+        ETCDCTL_API: "3"
+      register: etcd_snapshot
+      changed_when: etcd_snapshot.rc == 0
+      failed_when: etcd_snapshot.rc != 0
+      when: k8s_upgrade_minor_versions | length > 0
+
+    - name: Upgrade Kubernetes through each required minor release
+      ansible.builtin.include_tasks: ../tasks/upgrade-kubernetes-minor.yaml
+      loop: "{{ k8s_upgrade_minor_versions }}"
+      loop_control:
+        loop_var: upgrade_minor
+        label: "1.{{ upgrade_minor }}"
+
+    - name: Verify the final Kubernetes cluster state
+      ansible.builtin.command: kubectl get nodes -o wide
+      delegate_to: "{{ primary_control_plane }}"
+      become: true
+      become_user: "{{ hostvars[primary_control_plane].ansible_user }}"
+      environment: "{{ kubectl_environment }}"
+      register: final_cluster_status
+      changed_when: false
+      failed_when: final_cluster_status.rc != 0
+
+    - name: Display the final Kubernetes cluster state
+      ansible.builtin.debug:
+        var: final_cluster_status.stdout_lines

@@ -1,0 +1,207 @@
+---
+- name: Get Kubernetes version currently running on {{ upgrade_node }}
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - get
+      - node
+      - "{{ upgrade_node }}"
+      - -o
+      - "jsonpath={.status.nodeInfo.kubeletVersion}"
+  delegate_to: "{{ primary_control_plane }}"
+  become: true
+  become_user: "{{ hostvars[primary_control_plane].ansible_user }}"
+  environment: "{{ kubectl_environment }}"
+  register: node_kubernetes_version
+  changed_when: false
+  failed_when: node_kubernetes_version.rc != 0
+
+- name: Upgrade node {{ upgrade_node }} to Kubernetes {{ k8s_upgrade_release }}
+  when: >-
+    (node_kubernetes_version.stdout.split('.')[1] | int < upgrade_minor | int)
+    or (upgrade_minor | int == target_k8s_minor | int
+        and node_kubernetes_version.stdout != ('v' ~ k8s_upgrade_release))
+  block:
+    - name: Cordon node {{ upgrade_node }}
+      ansible.builtin.command: kubectl cordon {{ upgrade_node }}
+      delegate_to: "{{ primary_control_plane }}"
+      become: true
+      become_user: "{{ hostvars[primary_control_plane].ansible_user }}"
+      environment: "{{ kubectl_environment }}"
+      register: cordon_result
+      changed_when: cordon_result.rc == 0 and 'already cordoned' not in (cordon_result.stdout | lower)
+      failed_when: cordon_result.rc != 0
+
+    - name: Drain node {{ upgrade_node }}
+      ansible.builtin.command: >-
+        kubectl drain {{ upgrade_node }}
+        --ignore-daemonsets
+        --delete-emptydir-data
+        --grace-period=30
+        --timeout=600s
+      delegate_to: "{{ primary_control_plane }}"
+      become: true
+      become_user: "{{ hostvars[primary_control_plane].ansible_user }}"
+      environment: "{{ kubectl_environment }}"
+      register: drain_result
+      changed_when: drain_result.rc == 0
+      failed_when: drain_result.rc != 0
+
+    - name: Unhold Kubernetes packages on node {{ upgrade_node }}
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: install
+      loop:
+        - kubeadm
+        - kubelet
+        - kubectl
+      delegate_to: "{{ upgrade_node }}"
+      become: true
+
+    - name: Download Kubernetes repository key for minor {{ upgrade_minor }}
+      ansible.builtin.get_url:
+        url: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_upgrade_repository_minor }}/deb/Release.key"
+        dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+        mode: '0644'
+      delegate_to: "{{ upgrade_node }}"
+      become: true
+
+    - name: Configure Kubernetes apt repository for minor {{ upgrade_minor }}
+      ansible.builtin.deb822_repository:
+        name: kubernetes
+        types:
+          - deb
+        uris: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_upgrade_repository_minor }}/deb/"
+        suites:
+          - /
+        signed_by: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+        state: present
+      delegate_to: "{{ upgrade_node }}"
+      become: true
+
+    - name: Update apt cache on node {{ upgrade_node }}
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 0
+      delegate_to: "{{ upgrade_node }}"
+      become: true
+
+    - name: Upgrade kubeadm on node {{ upgrade_node }}
+      ansible.builtin.apt:
+        name: "kubeadm={{ k8s_upgrade_package_version }}"
+        state: present
+        allow_downgrade: false
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      delegate_to: "{{ upgrade_node }}"
+      become: true
+      register: kubeadm_package
+      retries: 3
+      delay: 5
+      until: kubeadm_package is success
+
+    - name: Hold kubeadm on node {{ upgrade_node }}
+      ansible.builtin.dpkg_selections:
+        name: kubeadm
+        selection: hold
+      delegate_to: "{{ upgrade_node }}"
+      become: true
+
+    - name: Apply Kubernetes upgrade on the primary control-plane node
+      ansible.builtin.command:
+        argv:
+          - kubeadm
+          - upgrade
+          - apply
+          - "v{{ k8s_upgrade_release }}"
+          - --yes
+      delegate_to: "{{ upgrade_node }}"
+      become: true
+      register: kubeadm_upgrade_apply
+      changed_when: kubeadm_upgrade_apply.rc == 0
+      failed_when: kubeadm_upgrade_apply.rc != 0
+      when: upgrade_node == primary_control_plane
+
+    - name: Upgrade an additional control-plane node
+      ansible.builtin.command: kubeadm upgrade node
+      delegate_to: "{{ upgrade_node }}"
+      become: true
+      register: kubeadm_upgrade_node
+      changed_when: kubeadm_upgrade_node.rc == 0
+      failed_when: kubeadm_upgrade_node.rc != 0
+      when: upgrade_node != primary_control_plane
+
+    - name: Upgrade kubelet and kubectl on node {{ upgrade_node }}
+      ansible.builtin.apt:
+        name:
+          - "kubelet={{ k8s_upgrade_package_version }}"
+          - "kubectl={{ k8s_upgrade_package_version }}"
+        state: present
+        allow_downgrade: false
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      delegate_to: "{{ upgrade_node }}"
+      become: true
+      register: kubelet_kubectl_packages
+      retries: 3
+      delay: 5
+      until: kubelet_kubectl_packages is success
+
+    - name: Hold kubelet and kubectl on node {{ upgrade_node }}
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop:
+        - kubelet
+        - kubectl
+      delegate_to: "{{ upgrade_node }}"
+      become: true
+
+    - name: Reload systemd and restart kubelet on node {{ upgrade_node }}
+      ansible.builtin.systemd:
+        name: kubelet
+        daemon_reload: true
+        state: restarted
+        enabled: true
+      delegate_to: "{{ upgrade_node }}"
+      become: true
+
+- name: Wait for node {{ upgrade_node }} to report Ready
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - get
+      - node
+      - "{{ upgrade_node }}"
+      - -o
+      - 'jsonpath={.status.conditions[?(@.type=="Ready")].status}'
+  delegate_to: "{{ primary_control_plane }}"
+  become: true
+  become_user: "{{ hostvars[primary_control_plane].ansible_user }}"
+  environment: "{{ kubectl_environment }}"
+  register: upgraded_node_ready
+  until: upgraded_node_ready.stdout == "True"
+  retries: 60
+  delay: 10
+  changed_when: false
+  failed_when: upgraded_node_ready.rc != 0
+  when: >-
+    (node_kubernetes_version.stdout.split('.')[1] | int <= upgrade_minor | int)
+    and node_kubernetes_version.stdout != ('v' ~ k8s_upgrade_release)
+
+- name: Ensure node {{ upgrade_node }} is schedulable after upgrade
+  ansible.builtin.command: kubectl uncordon {{ upgrade_node }}
+  delegate_to: "{{ primary_control_plane }}"
+  become: true
+  become_user: "{{ hostvars[primary_control_plane].ansible_user }}"
+  environment: "{{ kubectl_environment }}"
+  register: uncordon_result
+  changed_when: uncordon_result.rc == 0 and 'already uncordoned' not in (uncordon_result.stdout | lower)
+  failed_when: uncordon_result.rc != 0
+  when: >-
+    (node_kubernetes_version.stdout.split('.')[1] | int <= upgrade_minor | int)
+    and node_kubernetes_version.stdout != ('v' ~ k8s_upgrade_release)
+
+- name: Wait for node {{ upgrade_node }} to recover before continuing
+  ansible.builtin.pause:
+    seconds: 15

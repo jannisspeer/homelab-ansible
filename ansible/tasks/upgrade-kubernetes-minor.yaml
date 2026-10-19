@@ -1,0 +1,62 @@
+---
+- name: Set Kubernetes repository version for minor upgrade
+  ansible.builtin.set_fact:
+    k8s_upgrade_repository_minor: "1.{{ upgrade_minor }}"
+
+- name: Download Kubernetes repository key for minor {{ upgrade_minor }} on the primary node
+  ansible.builtin.get_url:
+    url: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_upgrade_repository_minor }}/deb/Release.key"
+    dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+    mode: '0644'
+  delegate_to: "{{ primary_control_plane }}"
+  become: true
+
+- name: Configure Kubernetes apt repository for minor {{ upgrade_minor }} on the primary node
+  ansible.builtin.deb822_repository:
+    name: kubernetes
+    types:
+      - deb
+    uris: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_upgrade_repository_minor }}/deb/"
+    suites:
+      - /
+    signed_by: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+    state: present
+  delegate_to: "{{ primary_control_plane }}"
+  become: true
+
+- name: Update apt cache on the primary node for minor {{ upgrade_minor }}
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 0
+  delegate_to: "{{ primary_control_plane }}"
+  become: true
+
+- name: Find latest kubeadm package for minor {{ upgrade_minor }}
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    apt-cache madison kubeadm |
+    awk '$3 ~ /^1\.{{ upgrade_minor }}\./ {print $3}' |
+    sort -V | tail -n 1
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ primary_control_plane }}"
+  become: true
+  register: available_kubeadm_version
+  changed_when: false
+  failed_when: available_kubeadm_version.rc != 0 or available_kubeadm_version.stdout | length == 0
+  args:
+    executable: /bin/bash
+  when: upgrade_minor | int != target_k8s_minor | int
+
+- name: Determine release and package version for minor {{ upgrade_minor }}
+  ansible.builtin.set_fact:
+    k8s_upgrade_package_version: "{{ requested_k8s_package_version if upgrade_minor | int == target_k8s_minor | int else available_kubeadm_version.stdout }}"
+    k8s_upgrade_repository_minor: "1.{{ upgrade_minor }}"
+    k8s_upgrade_release: "{{ (requested_k8s_package_version if upgrade_minor | int == target_k8s_minor | int else available_kubeadm_version.stdout).split('-')[0] }}"
+
+- name: Upgrade Kubernetes nodes for minor release {{ upgrade_minor }}
+  ansible.builtin.include_tasks: upgrade-kubernetes-node.yaml
+  loop: "{{ groups['control_plane'] }}"
+  loop_control:
+    loop_var: upgrade_node
+    label: "{{ upgrade_node }}"
