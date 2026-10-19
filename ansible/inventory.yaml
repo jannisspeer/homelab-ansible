@@ -15,6 +15,21 @@ multiverse:
       ansible_user: planeswalker
       ansible_ssh_private_key_file: ~/.ssh/homelab
       k8s_host: 172.20.20.4
+    phyrexia:
+      ansible_host: 192.168.194.238
+      ansible_user: planeswalker
+      ansible_ssh_private_key_file: ~/.ssh/homelab
+      k8s_host: 172.20.20.13
+    kamigawa:
+      ansible_host: 192.168.194.96
+      ansible_user: planeswalker
+      ansible_ssh_private_key_file: ~/.ssh/homelab
+      k8s_host: 172.20.20.12
+    ravnica:
+      ansible_host: 192.168.194.157
+      ansible_user: planeswalker
+      ansible_ssh_private_key_file: ~/.ssh/homelab
+      k8s_host: 172.20.20.11
 
 control_plane:
   hosts:
@@ -27,6 +42,9 @@ workers:
     zendikar:
     dominaria:
     innistrad:
+    phyrexia:
+    kamigawa:
+    ravnica:
 
 all:
   vars:

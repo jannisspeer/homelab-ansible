@@ -1,12 +1,12 @@
 # homelab-ansible
 
-Ansible project that provisions and manages a 3-node bare-metal Kubernetes cluster. All nodes serve as both control plane and workers. Application deployment is handled by [Flux CD](https://fluxcd.io/), connected to a companion GitOps repository.
+Ansible project that provisions and manages a bare-metal Kubernetes cluster with three control-plane nodes and dedicated worker nodes. The current control-plane nodes can also run workloads when listed in the `workers` inventory group. Application deployment is handled by [Flux CD](https://fluxcd.io/), connected to a companion GitOps repository.
 
 **Stack:** kubeadm, containerd, Flannel CNI, Flux CD, Grafana
 
 ## Infrastructure
 
-3 Debian/Ubuntu nodes, each serving as control plane + worker. Node hostnames, IPs, SSH credentials, and Kubernetes network configuration are defined in `ansible/inventory.yaml`.
+Three Debian/Ubuntu control-plane nodes and three dedicated Debian/Ubuntu worker nodes. Node hostnames, IPs, SSH credentials, and Kubernetes network configuration are defined in `ansible/inventory.yaml`.
 
 ## Project Structure
 
@@ -16,7 +16,7 @@ ansible/
   playbooks/
     00-prerequisites.yaml     # System packages, containerd, kubeadm/kubelet/kubectl
     01-init-cluster.yaml      # Initialize cluster, join nodes, install Flannel
-    02-reset-node.yaml        # Destructively remove a node from the cluster
+    02-join-worker.yaml      # Join workers and enable workloads on control-plane workers
     03-install-flux.yaml      # Install Flux CLI and components
     04-bootstrap-flux.yaml    # Bootstrap Flux GitOps from GitHub
     05-setup-grafana-secret.yaml  # Create Grafana admin credentials secret
@@ -24,6 +24,7 @@ ansible/
     07-shutdown-cluster.yaml  # Gracefully drain and power off the cluster
     08-start-cluster.yaml     # Recover cluster after manual power-on
     09-upgrade-kubernetes.yaml # Upgrade kubeadm, kubelet, and kubectl
+    10-reset-node.yaml        # Destructively remove a node from the cluster
   secrets/                    # Vault-encrypted secret files
 setup.sh                      # Sets ANSIBLE_INVENTORY env var
 ```
@@ -65,11 +66,14 @@ All playbooks require `-K` (`--ask-become-pass`). Playbooks using vault secrets 
 # Install prerequisites on all nodes
 ansible-playbook ansible/playbooks/00-prerequisites.yaml -K
 
-# Initialize the Kubernetes cluster
+# Initialize the control plane and install Flannel
 ansible-playbook ansible/playbooks/01-init-cluster.yaml -K
 
+# Join all workers (including untainting control planes listed as workers)
+ansible-playbook ansible/playbooks/02-join-worker.yaml -K
+
 # Remove a specific node (destructive)
-ansible-playbook ansible/playbooks/02-reset-node.yaml -e "target_node=<HOSTNAME>" -K
+ansible-playbook ansible/playbooks/10-reset-node.yaml -e "target_node=<HOSTNAME>" -K
 
 # Install Flux CLI and components
 ansible-playbook ansible/playbooks/03-install-flux.yaml -K

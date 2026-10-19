@@ -142,29 +142,6 @@
       when: inventory_hostname == groups['control_plane'][0]
       run_once: true
 
-- name: Remove control plane taints to allow workload scheduling
-  hosts: control_plane
-  environment:
-    KUBECONFIG: /home/{{ ansible_user }}/.kube/config
-  tasks:
-    - name: Wait for all nodes to be registered
-      ansible.builtin.shell: kubectl get nodes --no-headers | wc -l
-      become_user: "{{ ansible_user }}"
-      register: node_count
-      until: node_count.stdout | int == groups['control_plane'] | length
-      retries: 30
-      delay: 2
-      run_once: true
-      changed_when: false
-
-    - name: Remove NoSchedule taint from control plane nodes
-      ansible.builtin.shell: |
-        kubectl taint nodes {{ inventory_hostname }} node-role.kubernetes.io/control-plane:NoSchedule- || true
-      become_user: "{{ ansible_user }}"
-      delegate_to: "{{ groups['control_plane'][0] }}"
-      run_once: false
-      changed_when: false
-
 - name: Validate cluster health
   hosts: control_plane
   environment:

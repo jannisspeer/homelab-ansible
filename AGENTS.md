@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Ansible project that provisions and manages a 3-node bare-metal Kubernetes cluster on a homelab. All three nodes serve as both control plane and workers (taints removed). Application deployment is handled by Flux CD, connected to a companion GitOps repository.
+Ansible project that provisions and manages a bare-metal Kubernetes cluster on a homelab, with three control-plane nodes and dedicated workers. Existing control-plane nodes may also run workloads when listed in the `workers` inventory group and untainted. Application deployment is handled by Flux CD, connected to a companion GitOps repository.
 
 **Stack:** kubeadm, containerd, Flannel CNI, Flux CD, Grafana
 
@@ -11,16 +11,18 @@ Ansible project that provisions and manages a 3-node bare-metal Kubernetes clust
 ```
 ansible/
   inventory.yaml          # Single inventory file with all hosts and variables
-  playbooks/              # Numbered playbooks (00-08), executed sequentially
+  playbooks/              # Numbered playbooks (00-10), run as needed
     00-prerequisites.yaml   # System packages, containerd, kubeadm/kubelet/kubectl
-    01-init-cluster.yaml    # Initialize cluster, join nodes, install Flannel
-    02-reset-node.yaml      # Destructively remove a node from the cluster
+    01-init-cluster.yaml    # Initialize control plane and install Flannel
+    02-join-worker.yaml     # Join workers and enable workloads on control-plane workers
     03-install-flux.yaml    # Install Flux CLI and components
     04-bootstrap-flux.yaml  # Bootstrap Flux GitOps from GitHub
     05-setup-grafana-secret.yaml  # Create Grafana admin credentials secret
     06-rolling-update.yaml  # Rolling OS updates across all nodes
     07-shutdown-cluster.yaml  # Gracefully drain and power off the cluster
     08-start-cluster.yaml    # Recover cluster after manual power-on
+    09-upgrade-kubernetes.yaml # Upgrade kubeadm, kubelet, and kubectl
+    10-reset-node.yaml        # Destructively remove a node from the cluster
   secrets/                # Vault-encrypted secret files (never commit plaintext)
 setup.sh                  # Sets ANSIBLE_INVENTORY env var
 ```
@@ -29,7 +31,7 @@ There are no roles, `ansible.cfg`, `group_vars/`, or `host_vars/` directories. A
 
 ## Infrastructure
 
-3 Debian/Ubuntu (apt-based) nodes, each serving as control plane + worker. Python is managed via Miniconda at `/opt/miniconda3/envs/ansible/`.
+Three Debian/Ubuntu control-plane nodes and dedicated Debian/Ubuntu workers (apt-based). Python is managed via Miniconda at `/opt/miniconda3/envs/ansible/`.
 
 **All host-specific values** -- node hostnames, LAN IPs, Kubernetes network IPs, SSH user and key, pod/service CIDRs, and Flux GitOps target -- are defined in `ansible/inventory.yaml`. Always consult that file for current infrastructure details.
 
@@ -72,8 +74,11 @@ ansible-playbook ansible/playbooks/00-prerequisites.yaml -K
 # Example: bootstrap flux (needs vault)
 ansible-playbook ansible/playbooks/04-bootstrap-flux.yaml -K -J
 
+# Example: join all hosts in the workers inventory group
+ansible-playbook ansible/playbooks/02-join-worker.yaml -K
+
 # Example: reset a specific node
-ansible-playbook ansible/playbooks/02-reset-node.yaml -e "target_node=<HOSTNAME>" -K
+ansible-playbook ansible/playbooks/10-reset-node.yaml -e "target_node=<HOSTNAME>" -K
 
 # Example: graceful cluster shutdown
 ansible-playbook ansible/playbooks/07-shutdown-cluster.yaml -K
@@ -84,7 +89,7 @@ ansible-playbook ansible/playbooks/08-start-cluster.yaml -K
 
 ## Warnings
 
-- **`02-reset-node.yaml`** is destructive -- it fully drains, removes, and wipes a node from the cluster
+- **`10-reset-node.yaml`** is destructive -- it fully drains, removes, and wipes a node from the cluster
 - **`06-rolling-update.yaml`** performs rolling reboots -- nodes are drained and updated one at a time, never simultaneously
 - **`07-shutdown-cluster.yaml`** is disruptive -- it cordons/drains nodes and powers off all cluster nodes (primary control plane shuts down last)
 - **`08-start-cluster.yaml`** requires manual node power-on before execution and includes an interactive confirmation prompt
