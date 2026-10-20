@@ -35,10 +35,21 @@ setup.sh                      # Sets ANSIBLE_INVENTORY env var
 
 Ensure your SSH key is added to each node's `authorized_keys` for the SSH user defined in the inventory.
 
-Install Ansible on your local machine:
+Install Ansible via pipx on your local machine and on each new node:
 
 ```bash
 pipx install --include-deps ansible
+```
+
+Add entries for all cluster nodes to `/etc/hosts` on every node so hostnames used by Kubernetes resolve consistently. Use the nodes' `ansible_host` addresses from `ansible/inventory.yaml`; for the current inventory, add:
+
+```text
+192.168.194.84  zendikar.local  zendikar
+192.168.194.168 dominaria.local dominaria
+192.168.194.174 innistrad.local innistrad
+192.168.194.238 phyrexia.local  phyrexia
+192.168.194.96  kamigawa.local  kamigawa
+192.168.194.157 ravnica.local  ravnica
 ```
 
 ### Setup
