@@ -5,6 +5,22 @@
   environment:
     KUBECONFIG: /home/{{ ansible_user }}/.kube/config
   tasks:
+    - name: Configure kubelet to use the control-plane Kubernetes address
+      ansible.builtin.lineinfile:
+        path: /etc/default/kubelet
+        regexp: '^KUBELET_EXTRA_ARGS='
+        line: "KUBELET_EXTRA_ARGS=--node-ip={{ k8s_host }}"
+        create: true
+        mode: '0644'
+      register: kubelet_node_ip_config
+
+    - name: Restart kubelet when the control-plane address changes
+      ansible.builtin.systemd:
+        name: kubelet
+        state: restarted
+        enabled: true
+      when: kubelet_node_ip_config.changed
+
     - name: Check if cluster is already initialized
       ansible.builtin.stat:
         path: /etc/kubernetes/admin.conf

@@ -67,14 +67,21 @@
         - worker_node_status.rc == 0
         - worker_is_control_plane | default(false)
 
-    - name: Configure kubelet to use the worker Kubernetes address
+    - name: Configure kubelet to use the node's Kubernetes address
       ansible.builtin.lineinfile:
         path: /etc/default/kubelet
         regexp: '^KUBELET_EXTRA_ARGS='
         line: "KUBELET_EXTRA_ARGS=--node-ip={{ k8s_host }}"
         create: true
         mode: '0644'
-      when: worker_node_status.rc != 0
+      register: kubelet_node_ip_config
+
+    - name: Restart kubelet when the node address changes
+      ansible.builtin.systemd:
+        name: kubelet
+        state: restarted
+        enabled: true
+      when: kubelet_node_ip_config.changed
 
     - name: Join unregistered nodes as workers
       ansible.builtin.command: >-
